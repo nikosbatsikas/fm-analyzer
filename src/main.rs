@@ -46,6 +46,7 @@ struct App {
     scan: ScanState,
     sort: SortBy,
     cal_db: f32,
+    show_about: bool,
     kind: SourceKind,
     host: String,
     port: u16,
@@ -108,6 +109,7 @@ impl App {
             scan: ScanState::default(),
             sort: SortBy::Freq,
             cal_db: DEFAULT_CAL_DB,
+            show_about: false,
         }
     }
 
@@ -273,6 +275,17 @@ impl App {
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("ABOUT").size(11.5).strong().color(TEXT))
+                            .fill(CONTROL)
+                            .stroke(Stroke::new(1.0, CARD_BORDER)),
+                    )
+                    .clicked()
+                {
+                    self.show_about = true;
+                }
+                ui.add_space(12.0);
                 let s = self.snap.as_ref().filter(|_| self.worker.is_some());
                 let over = s.map(|s| s.peak_khz > 75.0).unwrap_or(false);
                 let rds = s.map(|s| s.rds.synced).unwrap_or(false);
@@ -1130,6 +1143,96 @@ impl App {
         }
     }
 
+    fn about_window(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new(RichText::new("About").strong())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .fixed_size(vec2(440.0, 0.0))
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .fill(CARD)
+                    .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.5)))
+                    .inner_margin(Margin::same(22.0)),
+            )
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(120.0);
+                        ui.label(RichText::new("FM").size(30.0).strong().color(ACCENT));
+                        ui.label(RichText::new("ANALYZER").size(30.0).strong().color(TEXT));
+                    });
+                    ui.label(
+                        RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                            .monospace()
+                            .color(LCD),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("FM broadcast analyzer for RTL-SDR · USB and rtl_tcp")
+                            .color(TEXT_DIM),
+                    );
+                });
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                section_title(ui, "Created by");
+                ui.add_space(4.0);
+                egui::Grid::new("about_credits").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                    ui.label(RichText::new("Nikos Batsikas").size(15.0).strong().color(TEXT));
+                    ui.label(RichText::new("Author · idea, design, testing").color(TEXT_DIM));
+                    ui.end_row();
+                    ui.label(RichText::new("Claude").size(15.0).strong().color(TEXT));
+                    ui.label(RichText::new("AI pair programmer by Anthropic").color(TEXT_DIM));
+                    ui.end_row();
+                });
+
+                ui.add_space(12.0);
+                section_title(ui, "Features");
+                ui.add_space(2.0);
+                for line in [
+                    "Deviation, pilot, RDS injection and BS.412 MPX power",
+                    "RF and MPX spectra, deviation history",
+                    "RDS decoder: PI, PS, PTY, RadioText, CT, AF",
+                    "Stereo audio with 50 / 75 µs de-emphasis",
+                    "Band scan with levels, C/N, RDS and deviation per station",
+                ] {
+                    ui.label(RichText::new(format!("•  {line}")).color(TEXT));
+                }
+
+                ui.add_space(12.0);
+                section_title(ui, "Project");
+                ui.add_space(2.0);
+                ui.hyperlink_to(
+                    "github.com/nikosbatsikas/fm-analyzer",
+                    "https://github.com/nikosbatsikas/fm-analyzer",
+                );
+                ui.label(
+                    RichText::new("Written in Rust · egui / eframe · egui_plot · cpal · librtlsdr")
+                        .size(11.5)
+                        .color(TEXT_DIM),
+                );
+                ui.label(RichText::new("MIT License · © 2026 Nikos Batsikas").size(11.5).color(TEXT_DIM));
+
+                ui.add_space(14.0);
+                ui.vertical_centered(|ui| {
+                    if primary_button(ui, "CLOSE", ACCENT).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if !open || close {
+            self.show_about = false;
+        }
+    }
+
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if !self.error.is_empty() {
@@ -1188,6 +1291,8 @@ impl eframe::App for App {
                 self.step_freq(step);
             }
         }
+
+        self.about_window(ctx);
 
         let bar = |fill| egui::Frame::none().fill(fill).inner_margin(Margin::symmetric(14.0, 8.0));
 

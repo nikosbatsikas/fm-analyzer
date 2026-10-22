@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [0.3.1] - 2026-10-23
 
+### Added
+- About window (ABOUT button in the header) with version, credits, features and project link.
+
 ### Fixed
 - Unselected tabs (ANALYZER / BAND SCAN), source, mode and de-emphasis switches and checkbox
   labels were nearly invisible on the dark theme; they now use explicit high-contrast colours.
