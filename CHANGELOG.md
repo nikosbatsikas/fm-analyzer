@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-23
+
+### Fixed
+- Unselected tabs (ANALYZER / BAND SCAN), source, mode and de-emphasis switches and checkbox
+  labels were nearly invisible on the dark theme; they now use explicit high-contrast colours.
+- Audio ON / MUTED button is now coloured green / red.
+
 ## [0.3.0] - 2026-10-23
 
 ### Added
@@ -49,7 +56,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - RDS decoder: PI, PS, PTY, TP/TA/MS, RadioText, clock time, AF list, group statistics, BLER.
 - GitHub Actions CI and tagged releases for Windows x64/x86, Linux x64 and macOS arm64.
 
-[Unreleased]: ../../compare/v0.3.0...HEAD
+[Unreleased]: ../../compare/v0.3.1...HEAD
+[0.3.1]: ../../compare/v0.3.0...v0.3.1
 [0.3.0]: ../../compare/v0.2.0...v0.3.0
 [0.2.0]: ../../compare/v0.1.0...v0.2.0
 [0.1.0]: ../../releases/tag/v0.1.0

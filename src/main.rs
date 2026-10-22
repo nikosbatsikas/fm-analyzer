@@ -14,7 +14,7 @@ use fm_analyzer::worker::{Cmd, Shared, Tuning, Worker};
 use std::sync::Arc;
 use std::time::Duration;
 use ui::theme::*;
-use ui::widgets::{badge, card, kv, lcd, led, primary_button, section_title, Meter};
+use ui::widgets::{badge, card, check, kv, lcd, led, primary_button, section_title, segment, tab, Meter};
 
 const APP_NAME: &str = "FM Analyzer";
 const DEFAULT_FREQ_MHZ: f64 = 98.0;
@@ -209,10 +209,14 @@ impl App {
             let connected = self.worker.is_some();
             ui.add_enabled_ui(!connected, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.spacing_mut().item_spacing.x = 2.0;
                     #[cfg(feature = "usb")]
-                    ui.selectable_value(&mut self.kind, SourceKind::Usb, " USB ");
-                    ui.selectable_value(&mut self.kind, SourceKind::Tcp, " RTL-TCP ");
+                    if segment(ui, " USB ", self.kind == SourceKind::Usb).clicked() {
+                        self.kind = SourceKind::Usb;
+                    }
+                    if segment(ui, " RTL-TCP ", self.kind == SourceKind::Tcp).clicked() {
+                        self.kind = SourceKind::Tcp;
+                    }
                 });
                 ui.add_space(6.0);
                 match self.kind {
@@ -259,9 +263,13 @@ impl App {
             ui.separator();
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.selectable_value(&mut self.view, View::Analyzer, RichText::new("  ANALYZER  ").strong());
-                ui.selectable_value(&mut self.view, View::Scan, RichText::new("  BAND SCAN  ").strong());
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if tab(ui, "ANALYZER", self.view == View::Analyzer).clicked() {
+                    self.view = View::Analyzer;
+                }
+                if tab(ui, "BAND SCAN", self.view == View::Scan).clicked() {
+                    self.view = View::Scan;
+                }
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -388,7 +396,7 @@ impl App {
             ui.vertical(|ui| {
                 section_title(ui, "RF gain");
                 ui.horizontal(|ui| {
-                    if ui.checkbox(&mut self.gain_auto, "Auto").changed() {
+                    if check(ui, &mut self.gain_auto, "Auto").changed() {
                         self.send(Cmd::SetGain(self.gain()));
                     }
                     ui.add_enabled_ui(!self.gain_auto, |ui| {
@@ -421,7 +429,10 @@ impl App {
                 ui.horizontal(|ui| {
                     let label = if self.muted { "MUTED" } else { "ON" };
                     if ui
-                        .add(egui::SelectableLabel::new(!self.muted, RichText::new(label).strong()))
+                        .add_sized(vec2(64.0, 24.0), {
+                            let (fill, fg) = if self.muted { (BAD.gamma_multiply(0.7), Color32::WHITE) } else { (GOOD.gamma_multiply(0.7), Color32::WHITE) };
+                            egui::Button::new(RichText::new(label).strong().color(fg)).fill(fill)
+                        })
                         .clicked()
                     {
                         self.muted = !self.muted;
@@ -441,12 +452,12 @@ impl App {
             ui.vertical(|ui| {
                 section_title(ui, "Mode");
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    if ui.selectable_label(!self.force_mono, " Stereo ").clicked() && self.force_mono {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if segment(ui, " Stereo ", !self.force_mono).clicked() && self.force_mono {
                         self.force_mono = false;
                         self.send(Cmd::SetMono(false));
                     }
-                    if ui.selectable_label(self.force_mono, " Mono ").clicked() && !self.force_mono {
+                    if segment(ui, " Mono ", self.force_mono).clicked() && !self.force_mono {
                         self.force_mono = true;
                         self.send(Cmd::SetMono(true));
                     }
@@ -455,9 +466,9 @@ impl App {
             ui.vertical(|ui| {
                 section_title(ui, "De-emphasis");
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.spacing_mut().item_spacing.x = 2.0;
                     for (us, name) in [(50.0, " 50 µs "), (75.0, " 75 µs "), (0.0, " Off ")] {
-                        if ui.selectable_label(self.deemphasis_us == us, name).clicked() {
+                        if segment(ui, name, self.deemphasis_us == us).clicked() {
                             self.deemphasis_us = us;
                             self.send(Cmd::SetDeemphasis(us));
                         }
@@ -910,7 +921,7 @@ impl App {
                     .on_hover_text("Minimum height above the noise floor to count as a station");
                     self.scan_cfg.threshold_db = self.scan_cfg.threshold_db.clamp(3.0, 40.0);
                     ui.add_space(10.0);
-                    ui.checkbox(&mut self.scan_cfg.rds, "Read RDS, pilot and deviation")
+                    check(ui, &mut self.scan_cfg.rds, "Read RDS, pilot and deviation")
                         .on_hover_text("Visits every station for up to 4 s after the level scan");
                     ui.add_space(10.0);
                     ui.label(

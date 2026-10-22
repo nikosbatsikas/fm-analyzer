@@ -234,3 +234,40 @@ pub fn primary_button(ui: &mut Ui, text: &str, color: Color32) -> egui::Response
             .min_size(vec2(110.0, 28.0)),
     )
 }
+
+/// Segmented-control / tab button with explicit colours, readable in both states.
+pub fn segment(ui: &mut Ui, text: &str, selected: bool) -> egui::Response {
+    let (fill, stroke, fg) = if selected {
+        (ACCENT.gamma_multiply(0.85), ACCENT, Color32::WHITE)
+    } else {
+        (CONTROL, CARD_BORDER, TEXT)
+    };
+    ui.add(
+        egui::Button::new(RichText::new(text).strong().color(fg))
+            .fill(fill)
+            .stroke(Stroke::new(1.0, stroke))
+            .rounding(3.0)
+            .min_size(vec2(0.0, 24.0)),
+    )
+}
+
+/// Large tab button for switching views.
+pub fn tab(ui: &mut Ui, text: &str, selected: bool) -> egui::Response {
+    let (fill, stroke, fg) = if selected {
+        (ACCENT.gamma_multiply(0.85), ACCENT, Color32::WHITE)
+    } else {
+        (CONTROL, CARD_BORDER, TEXT)
+    };
+    ui.add(
+        egui::Button::new(RichText::new(text).size(13.5).strong().color(fg))
+            .fill(fill)
+            .stroke(Stroke::new(1.0, stroke))
+            .rounding(4.0)
+            .min_size(vec2(118.0, 28.0)),
+    )
+}
+
+/// Checkbox with an always-readable label.
+pub fn check(ui: &mut Ui, value: &mut bool, text: &str) -> egui::Response {
+    ui.checkbox(value, RichText::new(text).color(TEXT))
+}
