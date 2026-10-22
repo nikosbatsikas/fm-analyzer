@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-23
+
+### Added
+- Settings are remembered in `settings.json`: source, host/port, USB device, frequency, RF gain,
+  PPM, volume, mute, mono, de-emphasis, dBµV calibration and band-scan options.
+  The file is stored next to the executable (portable); if that folder is read-only it is stored in
+  `%APPDATA%\FM Analyzer` (Windows) or `~/.config/fm-analyzer` (Linux/macOS).
+  Changes are saved automatically within a second and on exit.
+
 ## [0.3.2] - 2026-10-23
 
 ### Added
@@ -65,7 +74,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - RDS decoder: PI, PS, PTY, TP/TA/MS, RadioText, clock time, AF list, group statistics, BLER.
 - GitHub Actions CI and tagged releases for Windows x64/x86, Linux x64 and macOS arm64.
 
-[Unreleased]: ../../compare/v0.3.2...HEAD
+[Unreleased]: ../../compare/v0.4.0...HEAD
+[0.4.0]: ../../compare/v0.3.2...v0.4.0
 [0.3.2]: ../../compare/v0.3.1...v0.3.2
 [0.3.1]: ../../compare/v0.3.0...v0.3.1
 [0.3.0]: ../../compare/v0.2.0...v0.3.0

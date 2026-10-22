@@ -1,6 +1,6 @@
 [package]
 name = "fm-analyzer"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.80"
 description = "FM broadcast analyzer (deviation, pilot, RDS, MPX power, spectra) for RTL-SDR over USB or rtl_tcp"
@@ -20,6 +20,8 @@ audio = ["dep:cpal"]
 [dependencies]
 eframe = "0.29"
 egui_plot = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 libloading = { version = "0.8", optional = true }
 cpal = { version = "0.15", optional = true }
 

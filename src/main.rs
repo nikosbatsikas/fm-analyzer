@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod settings;
 mod sound;
 mod ui;
 
@@ -12,7 +13,9 @@ use fm_analyzer::source::tcp::RtlTcpSource;
 use fm_analyzer::source::{IqSource, R820T_GAINS};
 use fm_analyzer::worker::{Cmd, Shared, Tuning, Worker};
 use std::sync::Arc;
-use std::time::Duration;
+use settings::Settings;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use ui::theme::*;
 use ui::widgets::{badge, card, check, kv, lcd, led, primary_button, section_title, segment, tab, Meter};
 
@@ -37,8 +40,7 @@ enum SortBy {
     Level,
 }
 
-/// Default calibration: dBuV = dBFS - gain + CAL (0 dBFS ~ 0 dBm at 0 dB gain into 50 ohm).
-const DEFAULT_CAL_DB: f32 = 107.0;
+const GIFT_URL: &str = "https://www.paypal.com/donate/?business=nikos%40velikanet.net&currency_code=EUR";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SourceKind {
@@ -54,6 +56,9 @@ struct App {
     cal_db: f32,
     show_about: bool,
     logo: egui::TextureHandle,
+    saved: Settings,
+    settings_path: Option<PathBuf>,
+    last_save_check: Instant,
     kind: SourceKind,
     host: String,
     port: u16,
@@ -82,27 +87,30 @@ struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         apply(&cc.egui_ctx);
+        let (cfg, settings_path) = Settings::load();
         let audio = Arc::new(AudioOut::new());
+        audio.set_volume(cfg.volume);
+        audio.set_muted(cfg.muted);
         let (sound, sound_error) = match sound::open(audio.clone()) {
             Ok(s) => (Some(s), String::new()),
             Err(e) => (None, format!("Audio: {e}")),
         };
         Self {
-            kind: if cfg!(feature = "usb") { SourceKind::Usb } else { SourceKind::Tcp },
-            host: "127.0.0.1".into(),
-            port: 1234,
-            usb_index: 0,
+            kind: if cfg.source == "tcp" || !cfg!(feature = "usb") { SourceKind::Tcp } else { SourceKind::Usb },
+            host: cfg.host.clone(),
+            port: cfg.port,
+            usb_index: cfg.usb_index,
             usb_devices: Vec::new(),
-            freq_mhz: DEFAULT_FREQ_MHZ,
+            freq_mhz: if (64.0..=108.0).contains(&cfg.freq_mhz) { cfg.freq_mhz } else { DEFAULT_FREQ_MHZ },
             freq_edit: None,
             freq_edit_focus: false,
-            gain_auto: true,
-            gain_idx: 16,
-            ppm: 0,
-            deemphasis_us: 50.0,
-            force_mono: false,
+            gain_auto: cfg.gain_auto,
+            gain_idx: cfg.gain_index.min(R820T_GAINS.len() - 1),
+            ppm: cfg.ppm.clamp(-200, 200),
+            deemphasis_us: cfg.deemphasis_us,
+            force_mono: cfg.force_mono,
             volume: audio.volume(),
-            muted: false,
+            muted: cfg.muted,
             shared: Arc::new(Shared::default()),
             audio,
             sound,
@@ -112,16 +120,68 @@ impl App {
             peak_hold: 0.0,
             error: String::new(),
             view: View::Analyzer,
-            scan_cfg: ScanConfig::default(),
+            scan_cfg: ScanConfig {
+                start_khz: cfg.scan_start_khz,
+                stop_khz: cfg.scan_stop_khz,
+                threshold_db: cfg.scan_threshold_db,
+                rds: cfg.scan_read_rds,
+                ..ScanConfig::default()
+            },
             scan: ScanState::default(),
             sort: SortBy::Freq,
-            cal_db: DEFAULT_CAL_DB,
+            cal_db: cfg.calibration_db,
             show_about: false,
             logo: cc.egui_ctx.load_texture(
                 "app-logo",
                 egui::ColorImage::from_rgba_unmultiplied([128, 128], ICON_RGBA),
                 egui::TextureOptions::LINEAR,
             ),
+            saved: cfg,
+            settings_path,
+            last_save_check: Instant::now(),
+        }
+    }
+
+    fn current_settings(&self) -> Settings {
+        Settings {
+            source: match self.kind {
+                SourceKind::Usb => "usb".into(),
+                SourceKind::Tcp => "tcp".into(),
+            },
+            host: self.host.clone(),
+            port: self.port,
+            usb_index: self.usb_index,
+            freq_mhz: self.freq_mhz,
+            gain_auto: self.gain_auto,
+            gain_index: self.gain_idx,
+            ppm: self.ppm,
+            deemphasis_us: self.deemphasis_us,
+            force_mono: self.force_mono,
+            volume: self.volume,
+            muted: self.muted,
+            calibration_db: self.cal_db,
+            scan_start_khz: self.scan_cfg.start_khz,
+            scan_stop_khz: self.scan_cfg.stop_khz,
+            scan_threshold_db: self.scan_cfg.threshold_db,
+            scan_read_rds: self.scan_cfg.rds,
+        }
+    }
+
+    /// Writes settings.json when something changed (checked about once a second).
+    fn autosave(&mut self, force: bool) {
+        if !force && self.last_save_check.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.last_save_check = Instant::now();
+        let cur = self.current_settings();
+        if cur != self.saved {
+            match cur.save(self.settings_path.as_ref()) {
+                Ok(path) => {
+                    self.settings_path = Some(path);
+                    self.saved = cur;
+                }
+                Err(e) => self.error = format!("Could not save settings: {e}"),
+            }
         }
     }
 
@@ -1236,6 +1296,44 @@ impl App {
                 ui.label(RichText::new("MIT License · © 2026 Nikos Batsikas").size(11.5).color(TEXT_DIM));
 
                 ui.add_space(14.0);
+                egui::Frame::none()
+                    .fill(INSET)
+                    .stroke(Stroke::new(1.0, CARD_BORDER))
+                    .rounding(6.0)
+                    .inner_margin(Margin::same(12.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("Like FM Analyzer?").strong().color(TEXT));
+                                ui.label(
+                                    RichText::new("Send a gift to the author.")
+                                        .size(11.5)
+                                        .color(TEXT_DIM),
+                                );
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let paypal_blue = Color32::from_rgb(0x00, 0x70, 0xBA);
+                                let paypal_gold = Color32::from_rgb(0xFF, 0xC4, 0x39);
+                                let btn = egui::Button::new(
+                                    RichText::new("Gift with PayPal").strong().size(13.5).color(Color32::from_rgb(0x00, 0x30, 0x87)),
+                                )
+                                .fill(paypal_gold)
+                                .stroke(Stroke::new(1.0, paypal_blue))
+                                .rounding(14.0)
+                                .min_size(vec2(170.0, 30.0));
+                                if ui
+                                    .add(btn)
+                                    .on_hover_text("Opens PayPal in your browser (nikos@velikanet.net)")
+                                    .clicked()
+                                {
+                                    ui.ctx().open_url(egui::OpenUrl::new_tab(GIFT_URL));
+                                }
+                            });
+                        });
+                    });
+
+                ui.add_space(14.0);
                 ui.vertical_centered(|ui| {
                     if primary_button(ui, "CLOSE", ACCENT).clicked() {
                         close = true;
@@ -1307,6 +1405,7 @@ impl eframe::App for App {
         }
 
         self.about_window(ctx);
+        self.autosave(false);
 
         let bar = |fill| egui::Frame::none().fill(fill).inner_margin(Margin::symmetric(14.0, 8.0));
 
@@ -1357,6 +1456,7 @@ impl eframe::App for App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.autosave(true);
         self.stop();
     }
 }
