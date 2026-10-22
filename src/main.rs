@@ -208,10 +208,11 @@ impl App {
             }
             ui.add_enabled_ui(!self.gain_auto, |ui| {
                 let max = R820T_GAINS.len() - 1;
+                let label = format!("{:.1} dB", R820T_GAINS[self.gain_idx]);
                 let r = ui.add(
                     egui::Slider::new(&mut self.gain_idx, 0..=max)
                         .show_value(false)
-                        .text(format!("{:.1} dB", R820T_GAINS[self.gain_idx])),
+                        .text(label),
                 );
                 if r.changed() {
                     self.send(Cmd::SetGain(self.gain()));
