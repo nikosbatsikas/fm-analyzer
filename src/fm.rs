@@ -1,6 +1,7 @@
 //! FM broadcast analyzer: channel filter, FM discriminator, MPX measurements
 //! (peak deviation, pilot, RDS injection, ITU-R BS.412 MPX power), spectra and RDS.
 
+use crate::audio::StereoDecoder;
 use crate::dsp::{lowpass_taps, DecimFirC, PilotPll, Spectrum, C32};
 use crate::rds::{RdsDemod, RdsState};
 use std::collections::VecDeque;
@@ -44,6 +45,11 @@ pub struct Snapshot {
     pub mpx_power_60s: f32,
     /// Seconds integrated in `mpx_power_60s` (up to 60).
     pub mpx_seconds: usize,
+    /// Stereo decoder active (pilot locked and not forced mono).
+    pub stereo: bool,
+    /// Audio peak levels over the window, dBFS (after de-emphasis).
+    pub audio_l_db: f32,
+    pub audio_r_db: f32,
     /// RF spectrum (dBFS), FFT-shifted, `RF_FFT` bins across `IQ_RATE`.
     pub rf_db: Vec<f32>,
     /// MPX spectrum, dB relative to 1 kHz deviation, bins 0..MPX_RATE/2.
@@ -89,6 +95,12 @@ pub struct Analyzer {
     sec_n: usize,
     seconds: VecDeque<f64>,
     history: VecDeque<f32>,
+    // audio
+    stereo: StereoDecoder,
+    audio: Vec<[f32; 2]>,
+    audio_enabled: bool,
+    peak_l: f32,
+    peak_r: f32,
 }
 
 impl Default for Analyzer {
@@ -127,6 +139,11 @@ impl Analyzer {
             sec_n: 0,
             seconds: VecDeque::with_capacity(61),
             history: VecDeque::with_capacity(HISTORY + 1),
+            stereo: StereoDecoder::new(MPX_RATE, 50.0),
+            audio: Vec::with_capacity(8192),
+            audio_enabled: true,
+            peak_l: 0.0,
+            peak_r: 0.0,
         }
     }
 
@@ -139,6 +156,28 @@ impl Analyzer {
         self.history.clear();
         self.mpx_spec.reset();
         self.pll = PilotPll::new(MPX_RATE, 19_000.0);
+    }
+
+    /// De-emphasis time constant in microseconds (50 Europe, 75 Americas, 0 = off).
+    pub fn set_deemphasis(&mut self, tau_us: f32) {
+        self.stereo.set_deemphasis(tau_us);
+    }
+
+    pub fn set_force_mono(&mut self, mono: bool) {
+        self.stereo.force_mono = mono;
+    }
+
+    /// When disabled, decoded audio is not collected (meters still work).
+    pub fn set_audio_enabled(&mut self, on: bool) {
+        self.audio_enabled = on;
+        if !on {
+            self.audio.clear();
+        }
+    }
+
+    /// Takes the L/R frames (at [`crate::audio::AUDIO_RATE`]) decoded so far.
+    pub fn drain_audio(&mut self, out: &mut Vec<[f32; 2]>) {
+        out.append(&mut self.audio);
     }
 
     pub fn rds_state(&self) -> &RdsState {
@@ -218,8 +257,18 @@ impl Analyzer {
             self.sec_n = 0;
         }
 
+        // phase of the pilot at *this* sample (step() advances it to the next one)
+        let ph = self.pll.phase;
         self.pll.step(f);
-        let (s3, c3) = (3.0 * self.pll.phase).sin_cos();
+        let locked = self.pll.locked();
+        if let Some(lr) = self.stereo.push(f, ph, locked) {
+            self.peak_l = self.peak_l.max(lr[0].abs());
+            self.peak_r = self.peak_r.max(lr[1].abs());
+            if self.audio_enabled {
+                self.audio.push(lr);
+            }
+        }
+        let (s3, c3) = (3.0 * ph).sin_cos();
         if let Some(zr) = self.rds_fir.push(f * c3, -f * s3) {
             self.rds.push(zr);
         }
@@ -284,6 +333,9 @@ impl Analyzer {
             mpx_power_inst: (10.0 * (var / MPX_REF_POWER).log10()) as f32,
             mpx_power_60s: (10.0 * (mpx60 / MPX_REF_POWER).log10()) as f32,
             mpx_seconds: self.seconds.len(),
+            stereo: self.pll.locked() && !self.stereo.force_mono,
+            audio_l_db: 20.0 * (self.peak_l + 1e-6).log10(),
+            audio_r_db: 20.0 * (self.peak_r + 1e-6).log10(),
             rf_db,
             mpx_db,
             dev_history: self.history.iter().copied().collect(),
@@ -298,6 +350,8 @@ impl Analyzer {
         self.win_chan_pow = 0.0;
         self.raw_pow = 0.0;
         self.raw_n = 0;
+        self.peak_l = 0.0;
+        self.peak_r = 0.0;
         snap
     }
 }

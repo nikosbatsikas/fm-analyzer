@@ -1,9 +1,8 @@
-//! I/Q sample sources: RTL-SDR over USB (librtlsdr, loaded at runtime),
-//! rtl_tcp network servers, and a built-in demo signal generator.
+//! I/Q sample sources: RTL-SDR over USB (librtlsdr, loaded at runtime)
+//! and rtl_tcp network servers.
 
 use std::io;
 
-pub mod demo;
 pub mod tcp;
 #[cfg(feature = "usb")]
 pub mod usb;

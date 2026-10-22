@@ -15,20 +15,26 @@ and runs on **Windows x86 (32-bit) and x64**, Linux and macOS.
 | Signal | Channel level and band level in dBFS, carrier offset |
 | Spectra | RF spectrum (±1.14 MHz), MPX baseband spectrum 0–114 kHz with 19/38/57 kHz markers |
 | RDS decoding | PI, PS, PTY, TP/TA/MS, RadioText (2A/2B), clock time (4A), AF list, group statistics |
+| Audio | Stereo listening through the sound card, pilot-locked stereo decoder, 50/75 µs de-emphasis, L/R peak meters |
 
 Sources:
 
 * **RTL-SDR USB** – uses `librtlsdr`, loaded at runtime (nothing is linked at build time, which keeps
   32/64-bit builds simple).
 * **rtl_tcp** – connect to any `rtl_tcp` server on your LAN or the internet.
-* **Demo** – a built-in stereo test station on 98.00 MHz with pilot and RDS, for trying the app
-  without hardware.
 
 ## Quick start
 
 Download the zip for your system from the [Releases](../../releases) page, unzip it and run
-`fm-analyzer.exe` (Windows) or `fm-analyzer` (Linux/macOS). Pick a source, press **Start**, then tune
-with the frequency box or the ←/→ keys (100 kHz steps).
+`fm-analyzer.exe` (Windows) or `fm-analyzer` (Linux/macOS). Pick **USB** or **RTL-TCP**, press
+**CONNECT**, then tune:
+
+* click the frequency display and type (`98.5`, `985` or `98500` all work), or
+* scroll the mouse wheel over it, use the step buttons, or the ←/→ keys (100 kHz).
+
+Audio plays on the system's default output device. Use **ON/MUTED** and the volume slider in the
+*Audio* section, **Stereo/Mono**, and pick **50 µs** de-emphasis for Europe or **75 µs** for the
+Americas.
 
 ### Using a USB dongle
 
@@ -54,7 +60,7 @@ On the machine with the dongle:
 rtl_tcp -a 0.0.0.0 -p 1234
 ```
 
-In FM Analyzer choose **rtl_tcp**, enter the host and port and press **Start**. The app sets the
+In FM Analyzer choose **RTL-TCP**, enter the host and port and press **CONNECT**. The app sets the
 sample rate (2.28 MS/s), frequency, gain and PPM itself. Note that 2.28 MS/s of 8-bit I/Q is about
 4.6 MB/s (≈37 Mbit/s), so use a wired LAN.
 
@@ -64,7 +70,7 @@ Requires Rust 1.80 or newer (`rustup` from <https://rustup.rs>).
 
 ```sh
 cargo run --release                     # build and run for this machine
-cargo test --release --lib              # DSP / RDS tests against the demo signal
+cargo test --release --lib              # DSP, RDS and stereo tests on a synthetic station
 ```
 
 Windows 32-bit and 64-bit:
@@ -78,10 +84,12 @@ cargo build --release --target x86_64-pc-windows-msvc   # x64
 Linux build dependencies (Debian/Ubuntu):
 
 ```sh
-sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev libwayland-dev
+sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev libwayland-dev libasound2-dev
 ```
 
-Build without USB support (rtl_tcp and demo only): `cargo build --release --no-default-features`.
+Optional features (both on by default): `usb` (RTL-SDR over USB) and `audio` (sound output).
+For example `cargo build --release --no-default-features --features audio` builds an rtl_tcp-only
+version.
 
 ## How it works
 
@@ -92,6 +100,8 @@ RTL-SDR 2.28 MS/s u8 I/Q
             ├─ peak / >75 kHz / BS.412 MPX power
             ├─ MPX FFT (4096)
             ├─ 19 kHz PLL → pilot level & lock
+            ├─ L+R and (L−R)·(−2·sin 2θ) → 15 kHz low-pass ÷4 → 57 kS/s → de-emphasis
+            │    └─ cubic resampler (drift-controlled) → sound card
             └─ ×e^(-j·3θ) (57 kHz locked to pilot) → low-pass + ÷12 → 19 kS/s
                  └─ BPSK phase align → biphase matched filter + timing → differential decode
                       └─ block sync (CRC syndromes A/B/C/C'/D) → group decoder
@@ -104,9 +114,12 @@ Source layout:
 | `src/dsp.rs` | Complex math, FIR design, decimating FIR, FFT, spectrum averaging, pilot PLL |
 | `src/fm.rs` | The analyzer: measurements and spectra, produces a `Snapshot` every 100 ms |
 | `src/rds.rs` | RDS demodulator, block synchroniser and group decoder |
-| `src/source/` | `usb.rs` (librtlsdr), `tcp.rs` (rtl_tcp client), `demo.rs` (test signal + RDS encoder) |
+| `src/audio.rs` | Stereo decoder, de-emphasis, resampler and audio FIFO |
+| `src/source/` | `usb.rs` (librtlsdr), `tcp.rs` (rtl_tcp client) |
 | `src/worker.rs` | Background DSP thread and command channel |
-| `src/main.rs` | GUI (egui / eframe) |
+| `src/testsignal.rs` | Synthetic stereo + RDS station used by the unit tests |
+| `src/main.rs`, `src/ui/` | GUI (egui / eframe): layout, dark theme, meters and widgets |
+| `src/sound.rs` | Sound-card output (cpal) |
 
 The core library (`dsp`, `fm`, `rds`, sources) has no dependencies besides the optional
 `libloading`, so it can be reused in other tools (e.g. a headless monitor or logger).
@@ -142,7 +155,7 @@ the tag does not match the version in `Cargo.toml`. `0.x` versions are marked as
 
 ## Roadmap
 
-* Audio output with stereo decoder, de-emphasis 50/75 µs, L/R/M/S level meters
+* Output device selection, audio recording to WAV
 * Band scan with a station list (frequency, level, PI, PS)
 * CSV logging of measurements, deviation histogram
 * More RDS: PTYN, RT+, EON, long PS, Greek/extended character tables

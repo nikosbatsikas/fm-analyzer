@@ -1,6 +1,6 @@
 [package]
 name = "fm-analyzer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
 description = "FM broadcast analyzer (deviation, pilot, RDS, MPX power, spectra) for RTL-SDR over USB or rtl_tcp"
@@ -10,14 +10,17 @@ keywords = ["sdr", "rtl-sdr", "fm", "rds", "radio"]
 categories = ["multimedia::audio", "science"]
 
 [features]
-default = ["usb"]
+default = ["usb", "audio"]
 # RTL-SDR over USB through librtlsdr, loaded at runtime (nothing linked at build time)
 usb = ["dep:libloading"]
+# Stereo audio output through the system sound card
+audio = ["dep:cpal"]
 
 [dependencies]
 eframe = "0.29"
 egui_plot = "0.29"
 libloading = { version = "0.8", optional = true }
+cpal = { version = "0.15", optional = true }
 
 [lib]
 name = "fm_analyzer"

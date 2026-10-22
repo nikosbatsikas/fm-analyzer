@@ -1,18 +1,18 @@
-//! Built-in test signal: a stereo FM station at 98.0 MHz with pilot and RDS,
-//! plus noise. Lets you try the app (and run the tests) without hardware.
+//! Synthetic test signal for the unit tests (not part of the application):
+//! a stereo FM station at 98.0 MHz with pilot and RDS, plus noise.
 
-use super::IqSource;
+use crate::source::IqSource;
 use crate::rds::{make_block, OFFSET_A, OFFSET_B, OFFSET_C, OFFSET_D};
 use std::f64::consts::TAU;
 use std::io;
 use std::time::{Duration, Instant};
 
-pub const DEMO_FREQ_HZ: u32 = 98_000_000;
-pub const DEMO_PI: u16 = 0x2A3F;
-pub const DEMO_PS: &[u8; 8] = b"FM ANLZR";
-pub const DEMO_RT: &str = "FM Analyzer demo signal - stereo, pilot and RDS test";
-pub const DEMO_PILOT_HZ: f64 = 6_750.0;
-pub const DEMO_RDS_HZ: f64 = 3_500.0;
+pub const TEST_FREQ_HZ: u32 = 98_000_000;
+pub const TEST_PI: u16 = 0x2A3F;
+pub const TEST_PS: &[u8; 8] = b"FM ANLZR";
+pub const TEST_RT: &str = "FM Analyzer test signal - stereo, pilot and RDS test";
+pub const TEST_PILOT_HZ: f64 = 6_750.0;
+pub const TEST_RDS_HZ: f64 = 3_500.0;
 
 const FS: f64 = 2_280_000.0;
 const SAMPLES_PER_RDS_BIT: u32 = 1920; // 2.28 MHz / 1187.5 bit/s
@@ -42,10 +42,10 @@ impl RdsEncoder {
         self.groups_sent += 1;
         let slot = n % 10;
         let mut rt = [b' '; 64];
-        for (i, b) in DEMO_RT.bytes().take(63).enumerate() {
+        for (i, b) in TEST_RT.bytes().take(63).enumerate() {
             rt[i] = b;
         }
-        rt[DEMO_RT.len().min(63)] = 0x0D;
+        rt[TEST_RT.len().min(63)] = 0x0D;
         if n % 40 == 39 {
             // 4A clock-time: 2026-10-22 18:30 UTC, +03:00
             let mjd: u32 = 61335;
@@ -53,22 +53,22 @@ impl RdsEncoder {
             let b = (4 << 12) | (tp << 10) | (pty << 5) | ((mjd >> 15) & 3) as u16;
             let c = (((mjd & 0x7FFF) << 1) | (hour >> 4)) as u16;
             let d = (((hour & 15) << 12) | (min << 6) | off) as u16;
-            return [DEMO_PI, b, c, d];
+            return [TEST_PI, b, c, d];
         }
         if slot < 6 {
             // 0A: PS (4 segments), AF list
             let seg = (n / 10 * 6 + slot) as u16 % 4;
             let b = (tp << 10) | (pty << 5) | (1 << 3) | seg;
             let c = (225u16 << 8) | (1015 - 875); // 1 AF: 101.5 MHz
-            let d = ((DEMO_PS[seg as usize * 2] as u16) << 8) | DEMO_PS[seg as usize * 2 + 1] as u16;
-            [DEMO_PI, b, c, d]
+            let d = ((TEST_PS[seg as usize * 2] as u16) << 8) | TEST_PS[seg as usize * 2 + 1] as u16;
+            [TEST_PI, b, c, d]
         } else {
             // 2A: radiotext, 16 segments
             let seg = ((n / 10) * 4 + (slot - 6)) as usize % 16;
             let b = (2 << 12) | (tp << 10) | (pty << 5) | seg as u16;
             let c = ((rt[seg * 4] as u16) << 8) | rt[seg * 4 + 1] as u16;
             let d = ((rt[seg * 4 + 2] as u16) << 8) | rt[seg * 4 + 3] as u16;
-            [DEMO_PI, b, c, d]
+            [TEST_PI, b, c, d]
         }
     }
 
@@ -90,7 +90,7 @@ impl RdsEncoder {
     }
 }
 
-pub struct DemoSource {
+pub struct TestSignal {
     realtime: bool,
     started: Instant,
     produced: u64,
@@ -109,14 +109,14 @@ pub struct DemoSource {
     rng: u64,
 }
 
-impl DemoSource {
+impl TestSignal {
     /// `realtime = true` paces output at 2.28 MS/s like real hardware.
     pub fn new(realtime: bool) -> Self {
         Self {
             realtime,
             started: Instant::now(),
             produced: 0,
-            center: DEMO_FREQ_HZ,
+            center: TEST_FREQ_HZ,
             gain_db: 30.0,
             pilot: 0.0,
             tone_l: 0.0,
@@ -163,8 +163,8 @@ impl DemoSource {
 
         let mpx = 46_000.0 * m
             + 46_000.0 * s * (2.0 * pp).sin()
-            + DEMO_PILOT_HZ * pp.sin()
-            + DEMO_RDS_HZ * self.rds_shaped * (3.0 * pp).sin();
+            + TEST_PILOT_HZ * pp.sin()
+            + TEST_RDS_HZ * self.rds_shaped * (3.0 * pp).sin();
 
         self.tone_l = (self.tone_l + 1000.0 / FS).fract();
         self.tone_r = (self.tone_r + 400.0 / FS).fract();
@@ -173,9 +173,9 @@ impl DemoSource {
     }
 }
 
-impl IqSource for DemoSource {
+impl IqSource for TestSignal {
     fn name(&self) -> String {
-        "Demo signal (98.0 MHz)".into()
+        "Test signal".into()
     }
     fn set_sample_rate(&mut self, _hz: u32) -> io::Result<()> {
         Ok(())
@@ -194,7 +194,7 @@ impl IqSource for DemoSource {
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = buf.len() / 2;
-        let offset = DEMO_FREQ_HZ as f64 - self.center as f64;
+        let offset = TEST_FREQ_HZ as f64 - self.center as f64;
         let visible = offset.abs() < FS / 2.0;
         let amp = 0.25 * 10f64.powf((self.gain_db as f64 - 30.0) / 40.0);
         let amp = amp.min(0.9);
