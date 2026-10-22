@@ -40,7 +40,7 @@ enum SortBy {
     Level,
 }
 
-const GIFT_URL: &str = "https://www.paypal.com/donate/?business=nikos%40velikanet.net&currency_code=EUR";
+const GIFT_URL: &str = "https://paypal.me/nikosbatsikas";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SourceKind {
@@ -1324,7 +1324,7 @@ impl App {
                                 .min_size(vec2(170.0, 30.0));
                                 if ui
                                     .add(btn)
-                                    .on_hover_text("Opens PayPal in your browser (nikos@velikanet.net)")
+                                    .on_hover_text("Opens paypal.me/nikosbatsikas in your browser")
                                     .clicked()
                                 {
                                     ui.ctx().open_url(egui::OpenUrl::new_tab(GIFT_URL));
