@@ -4,9 +4,10 @@ mod sound;
 mod ui;
 
 use eframe::egui::{self, vec2, Align, Color32, FontId, Key, Layout, Margin, RichText, Sense, Stroke};
-use egui_plot::{HLine, Line, LineStyle, Plot, PlotPoints, VLine};
+use egui_plot::{Bar, BarChart, HLine, Line, LineStyle, Plot, PlotPoints, VLine};
 use fm_analyzer::audio::AudioOut;
 use fm_analyzer::fm::{Snapshot, HISTORY};
+use fm_analyzer::scan::{ScanConfig, ScanState};
 use fm_analyzer::source::tcp::RtlTcpSource;
 use fm_analyzer::source::{IqSource, R820T_GAINS};
 use fm_analyzer::worker::{Cmd, Shared, Tuning, Worker};
@@ -19,12 +20,32 @@ const APP_NAME: &str = "FM Analyzer";
 const DEFAULT_FREQ_MHZ: f64 = 98.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    Analyzer,
+    Scan,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortBy {
+    Freq,
+    Level,
+}
+
+/// Default calibration: dBuV = dBFS - gain + CAL (0 dBFS ~ 0 dBm at 0 dB gain into 50 ohm).
+const DEFAULT_CAL_DB: f32 = 107.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SourceKind {
     Usb,
     Tcp,
 }
 
 struct App {
+    view: View,
+    scan_cfg: ScanConfig,
+    scan: ScanState,
+    sort: SortBy,
+    cal_db: f32,
     kind: SourceKind,
     host: String,
     port: u16,
@@ -82,6 +103,11 @@ impl App {
             snap: None,
             peak_hold: 0.0,
             error: String::new(),
+            view: View::Analyzer,
+            scan_cfg: ScanConfig::default(),
+            scan: ScanState::default(),
+            sort: SortBy::Freq,
+            cal_db: DEFAULT_CAL_DB,
         }
     }
 
@@ -228,6 +254,15 @@ impl App {
             } else if primary_button(ui, "CONNECT", GOOD).clicked() {
                 self.start(&ctx);
             }
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.selectable_value(&mut self.view, View::Analyzer, RichText::new("  ANALYZER  ").strong());
+                ui.selectable_value(&mut self.view, View::Scan, RichText::new("  BAND SCAN  ").strong());
+            });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let s = self.snap.as_ref().filter(|_| self.worker.is_some());
@@ -445,17 +480,52 @@ impl App {
         let s = self.snap.as_ref();
         let v = |f: fn(&Snapshot) -> f32| s.map(f);
 
+        let gain_db = self.gain().map(|g| g as f32 / 10.0);
+        let cal = self.cal_db;
         card(ui, "Signal", |ui| {
-            Meter::new("Channel level", "dBFS", -60.0, 0.0)
-                .value(v(|s| s.channel_dbfs))
-                .zones(&[(-60.0, WARN), (-45.0, GOOD), (-6.0, BAD)])
-                .ticks(&[-60.0, -45.0, -30.0, -15.0, 0.0])
+            match gain_db {
+                Some(g) => Meter::new("Signal level (est.)", "dBµV", 0.0, 100.0)
+                    .value(s.map(|s| s.channel_dbfs - g + cal))
+                    .zones(&[(0.0, BAD), (20.0, WARN), (40.0, GOOD)])
+                    .ticks(&[0.0, 20.0, 40.0, 60.0, 80.0, 100.0])
+                    .show(ui),
+                None => Meter::new("Signal level (AGC)", "dBFS", -60.0, 0.0)
+                    .value(v(|s| s.channel_dbfs))
+                    .zones(&[(-60.0, WARN), (-45.0, GOOD), (-6.0, BAD)])
+                    .ticks(&[-60.0, -45.0, -30.0, -15.0, 0.0])
+                    .show(ui),
+            }
+            Meter::new("Carrier / noise", "dB", 0.0, 60.0)
+                .value(v(|s| s.cn_db))
+                .zones(&[(0.0, BAD), (15.0, WARN), (30.0, GOOD)])
+                .ticks(&[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
                 .show(ui);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Channel power").color(TEXT_DIM));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let t = s.map(|s| format!("{:.1} dBFS", s.channel_dbfs)).unwrap_or("---".into());
+                    ui.label(RichText::new(t).monospace());
+                });
+            });
+            if gain_db.is_none() {
+                ui.label(
+                    RichText::new("Set a manual RF gain to show the level in dBµV.")
+                        .size(11.0)
+                        .color(TEXT_FAINT),
+                );
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Carrier offset").color(TEXT_DIM));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let t = s.map(|s| format!("{:+.2} kHz", s.offset_khz)).unwrap_or("---".into());
                     ui.label(RichText::new(t).monospace());
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("dBµV calibration").color(TEXT_DIM))
+                    .on_hover_text("dBµV = dBFS − RF gain + calibration. Adjust against a known signal level.");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add(egui::DragValue::new(&mut self.cal_db).speed(0.5).suffix(" dB"));
                 });
             });
         });
@@ -787,6 +857,268 @@ impl App {
         });
     }
 
+    // ------------------------------------------------------------ band scan
+
+    fn dbuv(&self, dbfs: f32) -> f32 {
+        dbfs - self.scan.gain_db + self.cal_db
+    }
+
+    fn scan_csv(&self) -> String {
+        let mut out = String::from("freq_mhz,level_dbuv,level_dbfs,cn_db,pi,ps,pty,stereo,peak_dev_khz\n");
+        for st in &self.scan.stations {
+            out += &format!(
+                "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{}\n",
+                st.freq_khz as f32 / 1000.0,
+                self.dbuv(st.level_dbfs),
+                st.level_dbfs,
+                st.cn_db,
+                st.pi.map(|p| format!("{p:04X}")).unwrap_or_default(),
+                st.ps.clone().unwrap_or_default().trim_end(),
+                st.pty.map(|p| p.to_string()).unwrap_or_default(),
+                st.stereo.map(|b| if b { "stereo" } else { "mono" }).unwrap_or(""),
+                st.peak_dev_khz.map(|d| format!("{d:.1}")).unwrap_or_default(),
+            );
+        }
+        out
+    }
+
+    fn scan_view(&mut self, ui: &mut egui::Ui) {
+        let connected = self.worker.is_some();
+        let running = self.scan.running;
+        let scan_gain = R820T_GAINS[self.gain_idx];
+
+        card(ui, "Band scan", |ui| {
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!running, |ui| {
+                    let mut from = self.scan_cfg.start_khz as f64 / 1000.0;
+                    let mut to = self.scan_cfg.stop_khz as f64 / 1000.0;
+                    ui.label(RichText::new("From").color(TEXT_DIM));
+                    ui.add(egui::DragValue::new(&mut from).speed(0.1).fixed_decimals(1).suffix(" MHz"));
+                    ui.label(RichText::new("to").color(TEXT_DIM));
+                    ui.add(egui::DragValue::new(&mut to).speed(0.1).fixed_decimals(1).suffix(" MHz"));
+                    let from = ((from.clamp(64.0, 108.0) * 10.0).round() * 100.0) as u32;
+                    let to = ((to.clamp(64.0, 108.0) * 10.0).round() * 100.0) as u32;
+                    self.scan_cfg.start_khz = from.min(to);
+                    self.scan_cfg.stop_khz = to.max(from);
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Threshold").color(TEXT_DIM));
+                    ui.add(
+                        egui::DragValue::new(&mut self.scan_cfg.threshold_db)
+                            .speed(0.5)
+                            .suffix(" dB"),
+                    )
+                    .on_hover_text("Minimum height above the noise floor to count as a station");
+                    self.scan_cfg.threshold_db = self.scan_cfg.threshold_db.clamp(3.0, 40.0);
+                    ui.add_space(10.0);
+                    ui.checkbox(&mut self.scan_cfg.rds, "Read RDS, pilot and deviation")
+                        .on_hover_text("Visits every station for up to 4 s after the level scan");
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("Gain {scan_gain:.1} dB (fixed)"))
+                            .color(TEXT_DIM),
+                    )
+                    .on_hover_text("The scan uses the manual RF gain slider value; AGC is disabled while scanning");
+                });
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !self.scan.stations.is_empty() && ui.button("Copy CSV").clicked() {
+                        let csv = self.scan_csv();
+                        ui.output_mut(|o| o.copied_text = csv);
+                    }
+                    if running {
+                        if primary_button(ui, "STOP SCAN", BAD).clicked() {
+                            self.send(Cmd::StopScan);
+                        }
+                    } else {
+                        let r = ui.add_enabled_ui(connected, |ui| primary_button(ui, "START SCAN", ACCENT)).inner;
+                        if r.clicked() {
+                            let gain = (scan_gain * 10.0).round() as i32;
+                            self.scan = ScanState { running: true, ..Default::default() };
+                            self.send(Cmd::StartScan(self.scan_cfg, gain));
+                        }
+                        if !connected {
+                            ui.label(RichText::new("Connect a receiver first").color(TEXT_FAINT));
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            let status = if self.scan.status.is_empty() { "Ready".to_string() } else { self.scan.status.clone() };
+            ui.add(
+                egui::ProgressBar::new(self.scan.progress)
+                    .fill(ACCENT.gamma_multiply(0.7))
+                    .text(RichText::new(status).size(11.5).color(TEXT)),
+            );
+        });
+        ui.add_space(8.0);
+
+        // ---- band chart
+        let noise_uv = self.dbuv(self.scan.noise_dbfs);
+        let thr_uv = noise_uv + self.scan_cfg.threshold_db;
+        let station_set: std::collections::BTreeSet<u32> =
+            self.scan.stations.iter().map(|s| s.freq_khz).collect();
+        let bars: Vec<Bar> = self
+            .scan
+            .band
+            .iter()
+            .map(|&(khz, dbfs)| {
+                let is_station = station_set.contains(&khz);
+                let c = if is_station { ACCENT } else { TEXT_FAINT.gamma_multiply(0.8) };
+                Bar::new(khz as f64 / 1000.0, self.dbuv(dbfs) as f64)
+                    .width(0.07)
+                    .fill(c)
+                    .stroke(Stroke::NONE)
+                    .name(format!("{:.1} MHz", khz as f32 / 1000.0))
+            })
+            .collect();
+        let have_band = !self.scan.band.is_empty();
+        let (x0, x1) = (self.scan_cfg.start_khz as f64 / 1000.0, self.scan_cfg.stop_khz as f64 / 1000.0);
+        card(ui, "Band levels · dBµV (est.)", |ui| {
+            Plot::new("band")
+                .height(240.0)
+                .show_background(false)
+                .include_x(x0 - 0.2)
+                .include_x(x1 + 0.2)
+                .include_y(0.0)
+                .include_y(80.0)
+                .allow_drag(false)
+                .allow_zoom(false)
+                .allow_scroll(false)
+                .allow_boxed_zoom(false)
+                .x_axis_label("MHz")
+                .show(ui, |p| {
+                    if have_band {
+                        p.hline(HLine::new(noise_uv).color(TEXT_DIM).style(LineStyle::dashed_loose()).name("Noise floor"));
+                        p.hline(HLine::new(thr_uv).color(WARN.gamma_multiply(0.6)).style(LineStyle::dashed_loose()).name("Threshold"));
+                    }
+                    p.bar_chart(BarChart::new(bars));
+                });
+        });
+        ui.add_space(8.0);
+
+        // ---- station table
+        let mut order: Vec<usize> = (0..self.scan.stations.len()).collect();
+        match self.sort {
+            SortBy::Freq => order.sort_by_key(|&i| self.scan.stations[i].freq_khz),
+            SortBy::Level => order.sort_by(|&a, &b| {
+                self.scan.stations[b].level_dbfs.total_cmp(&self.scan.stations[a].level_dbfs)
+            }),
+        }
+        let mut tune_to: Option<u32> = None;
+        let mut new_sort = self.sort;
+        let title = format!("Stations · {}", self.scan.stations.len());
+        card(ui, &title, |ui| {
+            if self.scan.stations.is_empty() {
+                ui.label(
+                    RichText::new(if running {
+                        "Scanning…"
+                    } else {
+                        "No scan yet. Connect a receiver and press START SCAN."
+                    })
+                    .color(TEXT_FAINT),
+                );
+                return;
+            }
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::Grid::new("stations")
+                    .striped(true)
+                    .num_columns(10)
+                    .spacing([22.0, 6.0])
+                    .min_col_width(30.0)
+                    .show(ui, |ui| {
+                        let head = |ui: &mut egui::Ui, t: &str, active: bool| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(t)
+                                        .size(10.5)
+                                        .strong()
+                                        .color(if active { ACCENT } else { TEXT_DIM }),
+                                )
+                                .sense(Sense::click()),
+                            )
+                        };
+                        if head(ui, "FREQUENCY ▾", self.sort == SortBy::Freq).clicked() {
+                            new_sort = SortBy::Freq;
+                        }
+                        if head(ui, "LEVEL dBµV ▾", self.sort == SortBy::Level).clicked() {
+                            new_sort = SortBy::Level;
+                        }
+                        for h in ["dBFS", "C/N dB", "PI", "PS", "PTY", "MODE", "PEAK DEV", ""] {
+                            head(ui, h, false);
+                        }
+                        ui.end_row();
+
+                        for &i in &order {
+                            let st = &self.scan.stations[i];
+                            let probing = self.scan.probing == Some(i);
+                            let fc = if probing { WARN } else { LCD };
+                            ui.label(
+                                RichText::new(format!("{:6.1} MHz", st.freq_khz as f32 / 1000.0))
+                                    .monospace()
+                                    .size(14.0)
+                                    .strong()
+                                    .color(fc),
+                            );
+                            let uv = self.dbuv(st.level_dbfs);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{uv:5.1}")).monospace().strong());
+                                let (rect, _) = ui.allocate_exact_size(vec2(90.0, 8.0), Sense::hover());
+                                let frac = (uv / 100.0).clamp(0.0, 1.0);
+                                let pnt = ui.painter();
+                                pnt.rect_filled(rect, 2.0, INSET);
+                                let mut fill = rect;
+                                fill.set_width(rect.width() * frac);
+                                let c = if uv >= 40.0 { GOOD } else if uv >= 20.0 { WARN } else { BAD };
+                                pnt.rect_filled(fill, 2.0, c);
+                            });
+                            ui.label(RichText::new(format!("{:6.1}", st.level_dbfs)).monospace().color(TEXT_DIM));
+                            let cnc = if st.cn_db >= 30.0 { GOOD } else if st.cn_db >= 15.0 { WARN } else { BAD };
+                            ui.label(RichText::new(format!("{:4.1}", st.cn_db)).monospace().color(cnc));
+                            let dash = || RichText::new(if st.rds_checked { "—" } else { "·" }).color(TEXT_FAINT);
+                            match st.pi {
+                                Some(pi) => ui.label(RichText::new(format!("{pi:04X}")).monospace().strong()),
+                                None => ui.label(dash()),
+                            };
+                            match &st.ps {
+                                Some(ps) => ui.label(RichText::new(ps).monospace().strong().color(LCD)),
+                                None => ui.label(dash()),
+                            };
+                            match st.pty {
+                                Some(p) => ui.label(
+                                    RichText::new(fm_analyzer::rds::PTY_NAMES[p as usize & 31])
+                                        .size(12.0)
+                                        .color(TEXT_DIM),
+                                ),
+                                None => ui.label(dash()),
+                            };
+                            match st.stereo {
+                                Some(true) => ui.label(RichText::new("STEREO").size(11.0).strong().color(GOOD)),
+                                Some(false) => ui.label(RichText::new("MONO").size(11.0).strong().color(TEXT_DIM)),
+                                None => ui.label(dash()),
+                            };
+                            match st.peak_dev_khz {
+                                Some(d) => {
+                                    let c = if d > 75.0 { BAD } else if d > 70.0 { WARN } else { TEXT };
+                                    ui.label(RichText::new(format!("{d:5.1} kHz")).monospace().color(c))
+                                }
+                                None => ui.label(dash()),
+                            };
+                            if ui.add_enabled(!running, egui::Button::new("Tune")).clicked() {
+                                tune_to = Some(st.freq_khz);
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+        });
+        self.sort = new_sort;
+        if let Some(khz) = tune_to {
+            self.freq_mhz = khz as f64 / 1000.0;
+            self.retune();
+            self.view = View::Analyzer;
+        }
+    }
+
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if !self.error.is_empty() {
@@ -812,6 +1144,12 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        {
+            let sc = self.shared.scan.lock().unwrap();
+            if sc.running || sc.progress > 0.0 {
+                self.scan = sc.clone();
+            }
+        }
         if let Some(s) = self.shared.snapshot.lock().unwrap().take() {
             self.peak_hold = self.peak_hold.max(s.peak_khz);
             self.snap = Some(s);
@@ -851,6 +1189,16 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("status")
             .frame(bar(BG).inner_margin(Margin::symmetric(14.0, 4.0)))
             .show(ctx, |ui| self.status_bar(ui));
+
+        if self.view == View::Scan {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none().fill(BG).inner_margin(Margin::same(10.0)))
+                .show(ctx, |ui| self.scan_view(ui));
+            if self.worker.is_some() {
+                ctx.request_repaint_after(Duration::from_millis(250));
+            }
+            return;
+        }
 
         let side = egui::Frame::none().fill(BG).inner_margin(Margin::same(10.0));
         egui::SidePanel::left("meters")

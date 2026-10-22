@@ -12,7 +12,8 @@ and runs on **Windows x86 (32-bit) and x64**, Linux and macOS.
 | Pilot (19 kHz) | Injection level in kHz, PLL lock, pilot frequency |
 | RDS (57 kHz) | Injection level (approx.), sync, block error rate |
 | MPX power | ITU-R BS.412, 60 s integration and 100 ms instantaneous, in dBr |
-| Signal | Channel level and band level in dBFS, carrier offset |
+| Signal | Level in dBµV (estimated, calibratable) and dBFS, carrier-to-noise (C/N) in dB, carrier offset |
+| Band scan | Whole-band sweep, station list with level dBµV, C/N, PI, PS, PTY, stereo, peak deviation; CSV export |
 | Spectra | RF spectrum (±1.14 MHz), MPX baseband spectrum 0–114 kHz with 19/38/57 kHz markers |
 | RDS decoding | PI, PS, PTY, TP/TA/MS, RadioText (2A/2B), clock time (4A), AF list, group statistics |
 | Audio | Stereo listening through the sound card, pilot-locked stereo decoder, 50/75 µs de-emphasis, L/R peak meters |
@@ -35,6 +36,21 @@ Download the zip for your system from the [Releases](../../releases) page, unzip
 Audio plays on the system's default output device. Use **ON/MUTED** and the volume slider in the
 *Audio* section, **Stereo/Mono**, and pick **50 µs** de-emphasis for Europe or **75 µs** for the
 Americas.
+
+### Band scan
+
+Open the **BAND SCAN** tab, choose the range and threshold and press **START SCAN**. The level
+sweep of 87.5–108 MHz takes about 5 seconds. With *Read RDS, pilot and deviation* enabled, every
+station found is then visited for up to 4 s. Click **Tune** on a row to jump to that station. The
+scan uses the manual RF gain value (AGC is off during the scan) and restores the previous frequency
+and gain afterwards.
+
+### Signal level in dB
+
+The RTL-SDR measures power relative to its ADC full scale (dBFS). With a **manual** RF gain the app
+converts this to an estimated input level: `dBµV = dBFS − gain + calibration` (default calibration
+107 dB, adjustable in the *Signal* card; compare with a known signal to calibrate). **C/N** is the
+channel power above the noise floor and needs no calibration.
 
 ### Using a USB dongle
 

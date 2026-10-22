@@ -7,6 +7,7 @@ pub mod audio;
 pub mod dsp;
 pub mod fm;
 pub mod rds;
+pub mod scan;
 pub mod source;
 pub mod worker;
 

@@ -27,6 +27,8 @@ const MPX_REF_POWER: f64 = 19_000.0 * 19_000.0 / 2.0;
 pub struct Snapshot {
     /// Power of the filtered FM channel, dBFS.
     pub channel_dbfs: f32,
+    /// Carrier-to-noise ratio: channel power (+-100 kHz) over the noise floor in the same bandwidth, dB.
+    pub cn_db: f32,
     /// Power of the whole 2.28 MHz band, dBFS.
     pub band_dbfs: f32,
     /// Peak deviation in this window, kHz.
@@ -297,6 +299,7 @@ impl Analyzer {
             .update((0..MPX_FFT).map(|k| C32::new(mr[(mp + k) % MPX_FFT] - mean as f32, 0.0)));
 
         let p = self.rf_spec.power();
+        let cn_db = carrier_to_noise(p, IQ_RATE as f32, 100_000.0);
         let half = RF_FFT / 2;
         let rf_db: Vec<f32> = (0..RF_FFT)
             .map(|k| 10.0 * (p[(k + half) % RF_FFT] + 1e-20).log10())
@@ -321,6 +324,7 @@ impl Analyzer {
 
         let snap = Snapshot {
             channel_dbfs: 10.0 * ((self.win_chan_pow / n) as f32 + 1e-20).log10(),
+            cn_db,
             band_dbfs: 10.0 * ((self.raw_pow / self.raw_n.max(1) as f64) as f32 + 1e-20).log10(),
             peak_khz,
             over75_pct: 100.0 * self.win_over as f32 / self.win_n as f32,
@@ -354,4 +358,33 @@ impl Analyzer {
         self.peak_r = 0.0;
         snap
     }
+}
+
+/// C/N from an (unshifted) power spectrum: power within +-`half_bw` around DC versus the
+/// 20th-percentile bin power (noise floor) over the same number of bins. Edges of the
+/// band (outside +-85 % of Nyquist) are ignored because of the anti-alias filter roll-off.
+pub fn carrier_to_noise(p: &[f32], fs: f32, half_bw: f32) -> f32 {
+    let n = p.len();
+    if n < 16 {
+        return 0.0;
+    }
+    let bin = fs / n as f32;
+    let half = (half_bw / bin).round() as usize;
+    let mut sig = 0.0f64;
+    for k in 0..=half {
+        sig += p[k] as f64;
+        if k > 0 {
+            sig += p[n - k] as f64;
+        }
+    }
+    let nbins = (2 * half + 1) as f64;
+    let edge = (0.85 * n as f32 / 2.0) as usize;
+    let mut floor: Vec<f32> = (half + 1..edge).chain(n - edge..n - half).map(|k| p[k]).collect();
+    if floor.is_empty() {
+        return 0.0;
+    }
+    let idx = floor.len() / 5;
+    let (_, nth, _) = floor.select_nth_unstable_by(idx, |a, b| a.total_cmp(b));
+    let noise = (*nth as f64).max(1e-30) * nbins;
+    (10.0 * (sig / noise).log10()) as f32
 }

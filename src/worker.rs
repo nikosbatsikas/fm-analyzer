@@ -3,6 +3,7 @@
 
 use crate::audio::{resample_step, AudioOut, Resampler};
 use crate::fm::{Analyzer, Snapshot, IQ_RATE};
+use crate::scan::{ScanConfig, ScanJob, ScanState};
 use crate::source::IqSource;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -26,12 +27,16 @@ pub enum Cmd {
     SetDeemphasis(f32),
     SetMono(bool),
     ResetRds,
+    /// Band scan with a fixed manual gain (tenths of a dB).
+    StartScan(ScanConfig, i32),
+    StopScan,
     Stop,
 }
 
 #[derive(Default)]
 pub struct Shared {
     pub snapshot: Mutex<Option<Snapshot>>,
+    pub scan: Mutex<ScanState>,
     pub status: Mutex<String>,
     pub running: Mutex<bool>,
 }
@@ -96,6 +101,9 @@ fn run(
     set_status(shared, format!("Running: {}", src.name()));
     notify();
 
+    let mut cur_freq = t.freq_hz;
+    let mut cur_gain = t.gain;
+    let mut scan: Option<ScanJob> = None;
     let mut analyzer = Analyzer::new();
     analyzer.set_deemphasis(t.deemphasis_us);
     analyzer.set_force_mono(t.force_mono);
@@ -116,11 +124,40 @@ fn run(
                 Ok(cmd) => {
                     let r = match cmd {
                         Cmd::SetFreq(f) => {
-                            analyzer.reset_station();
-                            audio.clear();
-                            src.set_center_freq(f)
+                            cur_freq = f;
+                            if scan.is_some() {
+                                Ok(())
+                            } else {
+                                analyzer.reset_station();
+                                audio.clear();
+                                src.set_center_freq(f)
+                            }
                         }
-                        Cmd::SetGain(g) => src.set_gain(g),
+                        Cmd::SetGain(g) => {
+                            cur_gain = g;
+                            if scan.is_some() {
+                                Ok(())
+                            } else {
+                                src.set_gain(g)
+                            }
+                        }
+                        Cmd::StartScan(cfg, gain) => {
+                            audio.clear();
+                            let job = ScanJob::new(cfg, gain as f32 / 10.0);
+                            let r = src
+                                .set_gain(Some(gain))
+                                .and_then(|_| src.set_center_freq(job.first_freq_hz()));
+                            *shared.scan.lock().unwrap() = job.state.clone();
+                            scan = Some(job);
+                            r
+                        }
+                        Cmd::StopScan => match scan.as_mut() {
+                            Some(job) => {
+                                job.stop();
+                                Ok(())
+                            }
+                            None => Ok(()),
+                        },
                         Cmd::SetPpm(p) => src.set_ppm(p),
                         Cmd::SetDeemphasis(us) => {
                             analyzer.set_deemphasis(us);
@@ -148,6 +185,26 @@ fn run(
             Ok(0) => {
                 set_status(shared, "Stream ended");
                 break;
+            }
+            Ok(n) if scan.is_some() => {
+                let job = scan.as_mut().unwrap();
+                let mut r = Ok(());
+                if let Some(f) = job.feed(&buf[..n]) {
+                    r = src.set_center_freq(f);
+                }
+                *shared.scan.lock().unwrap() = job.state.clone();
+                if job.finished() {
+                    scan = None;
+                    analyzer.reset_station();
+                    r = r
+                        .and_then(|_| src.set_gain(cur_gain))
+                        .and_then(|_| src.set_center_freq(cur_freq));
+                }
+                notify();
+                if let Err(e) = r {
+                    set_status(shared, format!("Scan error: {e}"));
+                    break;
+                }
             }
             Ok(n) => {
                 let active = audio.active();

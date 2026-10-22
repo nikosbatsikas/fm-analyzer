@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-23
+
+### Added
+- Band scan view: sweeps 87.5–108 MHz (configurable) in 1.6 MHz hops, measures every
+  100 kHz channel and detects stations above an adjustable threshold.
+- Optional per-station probe during the scan: RDS PI / PS / PTY, stereo pilot and peak deviation.
+- Band level chart with noise floor and threshold, sortable station table, one-click tuning,
+  CSV copy to the clipboard.
+- Signal level in dBµV (estimated from dBFS, RF gain and an adjustable calibration offset)
+  and carrier-to-noise (C/N) meter in dB.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
@@ -38,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - RDS decoder: PI, PS, PTY, TP/TA/MS, RadioText, clock time, AF list, group statistics, BLER.
 - GitHub Actions CI and tagged releases for Windows x64/x86, Linux x64 and macOS arm64.
 
-[Unreleased]: ../../compare/v0.2.0...HEAD
+[Unreleased]: ../../compare/v0.3.0...HEAD
+[0.3.0]: ../../compare/v0.2.0...v0.3.0
 [0.2.0]: ../../compare/v0.1.0...v0.2.0
 [0.1.0]: ../../releases/tag/v0.1.0
