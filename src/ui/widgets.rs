@@ -221,7 +221,7 @@ pub fn lcd(ui: &mut Ui, text: &str, size: f32, color: Color32) {
 /// Label / value row for property lists.
 pub fn kv(ui: &mut Ui, key: &str, value: impl Into<RichText>) {
     ui.label(RichText::new(key).color(TEXT_DIM));
-    ui.label(value);
+    ui.label(value.into());
     ui.end_row();
 }
 

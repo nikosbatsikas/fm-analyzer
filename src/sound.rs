@@ -8,7 +8,7 @@ use std::sync::Arc;
 mod imp {
     use super::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use cpal::{FromSample, Sample, SizedSample};
+    use cpal::{FromSample, SizedSample};
 
     pub struct Sound {
         _stream: cpal::Stream,
