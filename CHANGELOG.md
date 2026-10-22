@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-23
+
+### Added
+- Application icon (radio with antenna and signal waves): embedded in the Windows .exe,
+  used as the window / taskbar icon, and shown in the header and About window.
+
 ## [0.3.1] - 2026-10-23
 
 ### Added
@@ -59,7 +65,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - RDS decoder: PI, PS, PTY, TP/TA/MS, RadioText, clock time, AF list, group statistics, BLER.
 - GitHub Actions CI and tagged releases for Windows x64/x86, Linux x64 and macOS arm64.
 
-[Unreleased]: ../../compare/v0.3.1...HEAD
+[Unreleased]: ../../compare/v0.3.2...HEAD
+[0.3.2]: ../../compare/v0.3.1...v0.3.2
 [0.3.1]: ../../compare/v0.3.0...v0.3.1
 [0.3.0]: ../../compare/v0.2.0...v0.3.0
 [0.2.0]: ../../compare/v0.1.0...v0.2.0

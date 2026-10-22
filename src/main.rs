@@ -17,6 +17,12 @@ use ui::theme::*;
 use ui::widgets::{badge, card, check, kv, lcd, led, primary_button, section_title, segment, tab, Meter};
 
 const APP_NAME: &str = "FM Analyzer";
+/// 128x128 RGBA app icon (generated from assets/icon-1024.png).
+const ICON_RGBA: &[u8] = include_bytes!("../assets/icon-128.rgba");
+
+fn icon_data() -> egui::IconData {
+    egui::IconData { rgba: ICON_RGBA.to_vec(), width: 128, height: 128 }
+}
 const DEFAULT_FREQ_MHZ: f64 = 98.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,6 +53,7 @@ struct App {
     sort: SortBy,
     cal_db: f32,
     show_about: bool,
+    logo: egui::TextureHandle,
     kind: SourceKind,
     host: String,
     port: u16,
@@ -110,6 +117,11 @@ impl App {
             sort: SortBy::Freq,
             cal_db: DEFAULT_CAL_DB,
             show_about: false,
+            logo: cc.egui_ctx.load_texture(
+                "app-logo",
+                egui::ColorImage::from_rgba_unmultiplied([128, 128], ICON_RGBA),
+                egui::TextureOptions::LINEAR,
+            ),
         }
     }
 
@@ -197,6 +209,8 @@ impl App {
 
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            ui.add(egui::Image::new((self.logo.id(), vec2(30.0, 30.0))));
+            ui.add_space(2.0);
             ui.label(RichText::new("FM").size(20.0).strong().color(ACCENT));
             ui.label(RichText::new("ANALYZER").size(20.0).strong().color(TEXT));
             ui.label(
@@ -1163,11 +1177,11 @@ impl App {
             )
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(120.0);
-                        ui.label(RichText::new("FM").size(30.0).strong().color(ACCENT));
-                        ui.label(RichText::new("ANALYZER").size(30.0).strong().color(TEXT));
-                    });
+                    ui.add(egui::Image::new((self.logo.id(), vec2(88.0, 88.0))));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("FM ANALYZER").size(28.0).strong().color(TEXT),
+                    );
                     ui.label(
                         RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
                             .monospace()
@@ -1351,6 +1365,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("{APP_NAME} v{}", env!("CARGO_PKG_VERSION")))
+            .with_icon(Arc::new(icon_data()))
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([1180.0, 720.0]),
         ..Default::default()

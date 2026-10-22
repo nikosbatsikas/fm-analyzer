@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon-256.png" width="128" alt="FM Analyzer icon"></p>
+
 # FM Analyzer
 
 A portable FM broadcast analyzer written in Rust, in the spirit of tools like FM Scope.
