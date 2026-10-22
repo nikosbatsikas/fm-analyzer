@@ -13,7 +13,7 @@ jobs:
     name: Test (Linux x64)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install GUI build dependencies
@@ -24,7 +24,7 @@ jobs:
       - name: Unit tests (DSP, RDS, demo signal)
         run: cargo test --release --lib
       - name: Build
-        run: cargo build --release
+        run: .github/scripts/build.sh cargo build --release
 
   windows:
     name: Build Windows ${{ matrix.arch }}
@@ -38,7 +38,7 @@ jobs:
           - arch: x86
             target: i686-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -48,4 +48,5 @@ jobs:
       - name: Unit tests
         run: cargo test --release --lib --target ${{ matrix.target }}
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+        run: .github/scripts/build.sh cargo build --release --target ${{ matrix.target }}
